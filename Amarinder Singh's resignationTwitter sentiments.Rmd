@@ -1,0 +1,311 @@
+
+```{r}
+library(tidyverse)
+library(twitteR)
+library(dplyr)
+library(rtweet)
+library(ggplot2)
+library(SnowballC)
+library(tm)
+library(RColorBrewer)
+library(wordcloud)
+library(topicmodels)
+library(data.table)
+library(stringi)
+library(qdap)
+library(rJava)
+library(syuzhet)
+library(DT)
+library(gridExtra)
+library(grid)
+library(sentimentr)
+library(tidyr)
+library(tidyselect)
+library(tidytext)
+library(sqldf)
+library(qdapDictionaries)
+```
+```{r}
+twt_data = search_tweets("#AmarinderSingh", n = 5000, include_rts = TRUE, type = "recent", lang = "en")
+
+view(twt_data)
+
+twt_data = as.data.frame(twt_data)
+
+dim(twt_data)
+
+summary(twt_data)
+
+```
+#Data Cleaning
+```{r}
+
+myCorpus =  VCorpus(VectorSource(twt_data$text))
+
+myCorpus = tm_map(myCorpus, content_transformer(stri_trans_tolower))
+
+#Remove Stopwords      
+
+mystopwords = c(stopwords('english'), c("modi", "amp","congress", "will", "see", "getting","congressmen","giving","interview","pakistan","cant","platter","vijay","ship","high","news","cant"))
+
+myCorpus =  tm_map(myCorpus,removeWords, mystopwords)
+
+myCorpus = tm_map(myCorpus,removeNumbers)
+myCorpus = tm_map(myCorpus,removePunctuation)
+
+myCorpus = tm_map(myCorpus,stripWhitespace)
+
+```
+```{r}
+
+#remove links,urls
+
+removeURL = function(x) gsub("http[^[:space:]]*", "", x)
+removePicURL = function(x) gsub("pic.twitter.com[^[:space:]]*", "", x)
+myCorpus = tm_map(myCorpus, content_transformer(removeURL))
+```
+```{r}
+
+#remove @usernames
+
+removeUsername = function(x) gsub("@[^[:space:]]*", "", x)  
+myCorpus = tm_map(myCorpus, content_transformer(removeUsername))
+
+```
+
+```{r}
+#Remove anything except the English language, numbers and space
+
+removeNumPunct = function(x) gsub("[^[:alnum:][:space:]]*", "", x)   
+myCorpus = tm_map(myCorpus, content_transformer(removeNumPunct))
+
+#Remove Single letter words
+
+removeSingle = function(x) gsub(" . ", " ", x)   
+myCorpus = tm_map(myCorpus, content_transformer(removeSingle))
+
+```
+```{r}
+dtm = TermDocumentMatrix(myCorpus)
+all_tokens = findFreqTerms(dtm,1)
+tokens_to_remove = setdiff(all_tokens, GradyAugmented)
+myCorpus = tm_map(myCorpus, content_transformer(removeWords), tokens_to_remove)
+
+dtm = TermDocumentMatrix(myCorpus)
+
+m = as.matrix(dtm)
+v = sort(rowSums(m),decreasing=TRUE)
+d = data.frame(word = names(v),freq=v)
+datatable(head(d, 50))
+
+```
+```{r}
+#Creating the term document matrix
+
+tdm = TermDocumentMatrix(myCorpus, control= list(wordLengths= c(1, Inf)))
+tdm
+```
+#showing terms appearing more than 100, 150 and 200 times in the tweets
+```{r}
+(freq.terms = findFreqTerms(tdm, lowfreq = 100))
+term.freq = rowSums(as.matrix(tdm))
+term.freq = subset(term.freq, term.freq > 100)
+df = data.frame(term = names(term.freq), freq= term.freq)
+(freq.terms = findFreqTerms(tdm, lowfreq = 150))
+term.freq = rowSums(as.matrix(tdm))
+term.freq = subset(term.freq, term.freq > 150)
+df1 = data.frame(term = names(term.freq), freq= term.freq)
+(freq.terms = findFreqTerms(tdm, lowfreq = 200))
+term.freq = rowSums(as.matrix(tdm))
+term.freq = subset(term.freq, term.freq > 200)
+df2 = data.frame(term = names(term.freq), freq= term.freq)
+
+
+```
+```{r}
+#plotting the frequent terms
+
+p1=ggplot(df, aes(reorder(term, freq),freq)) + theme_bw() + geom_bar(stat = "identity")  + coord_flip() +labs(list(title="Term Frequency Chart @100", x="Terms", y="Term Counts")) 
+p2=ggplot(df1, aes(reorder(term, freq),freq)) + theme_bw() + geom_bar(stat = "identity")  + coord_flip() +labs(list(title="Term Frequency Chart @150", x="Terms", y="Term Counts")) 
+p3=ggplot(df2, aes(reorder(term, freq),freq)) + theme_bw() + geom_bar(stat = "identity")  + coord_flip() +labs(list(title="Term Frequency Chart @200", x="Terms", y="Term Counts")) 
+
+p1
+p2
+p3
+```
+
+```{r}
+#plotting the word cloud
+
+grid.arrange(p3,p4,ncol=2)
+
+#Plotting word frequencies
+
+barplot(d[0:10,]$freq, las = 2, names.arg = d[0:10,]$word,
+        col ="lightblue", main ="Most frequent words",
+        ylab = "Word frequencies")
+
+word.freq = sort(rowSums(as.matrix(tdm)), decreasing= F)
+pal =  brewer.pal(8, "Dark2")
+wordcloud(words = names(word.freq), freq = word.freq, min.freq = 2, random.order = F, colors = pal, max.words = 200,c(2,.5))
+```
+#Positive word cloud
+```{r}
+ap_td = tidy(tdm)
+ap_sentiments = ap_td %>%
+  inner_join(get_sentiments("bing"), by = c(term = "word"))
+ap_sentiments_positive = ap_sentiments[ap_sentiments$sentiment=='positive',]
+ap_sentiments_negative = ap_sentiments[ap_sentiments$sentiment=='negative',]
+plusve = sqldf("select SUM(count) as Freq,term from ap_sentiments_positive group by term order by Freq")
+negve = sqldf("select SUM(count) as Freq,term from ap_sentiments_negative group by term order by Freq")
+wordcloud(words = plusve$term,freq = plusve$Freq,min.freq = 2,random.order = F,colors = brewer.pal(8,"Dark2"),max.words = 200)
+
+```
+#Negative word cloud
+```{r}
+wordcloud(words = negve$term,freq = negve$Freq,min.freq = 2,random.order = F,colors = brewer.pal(8,"Dark2"),max.words = 200)
+```
+
+#Find association with a specific keyword in the tweets
+```{r}
+list1 = findAssocs(tdm, "resignation", 0.2)
+corrdf1 = t(data.frame(t(sapply(list1,c))))
+corrdf1
+```
+
+
+```{r}
+barplot(t(as.matrix(corrdf1)), beside=TRUE,xlab = "Words",ylab = "Corr",col = "orange",main = "Amarinder Singh - resignation",border = "black",las=2)
+```
+```{r}
+list1 = findAssocs(tdm, "fallen", 0.2)
+corrdf1 = t(data.frame(t(sapply(list1,c))))
+corrdf1
+```
+
+
+```{r}
+barplot(t(as.matrix(corrdf1)), beside=TRUE,xlab = "Words",ylab = "Corr",col = "orange",main = "Amarinder Singh - fallen",border = "black",las=2)
+```
+
+
+```{r}
+list1 = findAssocs(tdm, "command", 0.2)
+corrdf1 = t(data.frame(t(sapply(list1,c))))
+corrdf1
+```
+
+
+```{r}
+barplot(t(as.matrix(corrdf1)), beside=TRUE,xlab = "Words",ylab = "Corr",col = "orange",main = "Amarinder Singh - command",border = "black",las=2)
+```
+
+
+```{r}
+list1 =  findAssocs(tdm, "sinking", 0.2)
+corrdf1 = t(data.frame(t(sapply(list1,c))))
+corrdf1
+```
+
+
+```{r}
+barplot(t(as.matrix(corrdf1)), beside=TRUE,xlab = "Words",ylab = "Corr",col = "orange",main = "Amarinder Singh - sinking",border = "black",las=2)
+```
+#Topic Modelling to identify latent topics using LDA technique
+```{r}
+
+
+dtm = as.DocumentTermMatrix(tdm)
+rowTotals = apply(dtm , 1, sum)
+NullDocs = dtm[rowTotals==0, ]
+dtm   = dtm[rowTotals> 0, ]
+if (length(NullDocs$dimnames$Docs) > 0) {
+twt_data <- twt_data[-as.numeric(NullDocs$dimnames$Docs),]
+}
+lda = LDA(dtm, k = 7) # find 5 topic
+term = terms(lda, 7) # first 7 terms of every topic
+(term = apply(term, MARGIN = 2, paste, collapse = ", "))
+```
+
+```{r Graph4,echo=TRUE}
+topics =  topics(lda)
+topics =  data.frame(date=(twt_data$created), topic = topics)
+qplot (date, ..count.., data=topics, geom ="density",fill= term[topic],position="stack")+ theme(legend.title = element_text(colour="black", size=6)) + theme(legend.text = element_text(colour="black", size=6))
+```
+
+```{r Graph5,echo=TRUE}
+#Sentiment Analysis: understanding emotional valence in tweets
+
+mysentiment = get_nrc_sentiment((twt_data$text))
+
+#Get the sentiment score by emotion
+
+mysentiment.positive =sum(mysentiment$positive)
+mysentiment.anger =sum(mysentiment$anger)
+mysentiment.anticipation =sum(mysentiment$anticipation)
+mysentiment.disgust =sum(mysentiment$disgust)
+mysentiment.fear =sum(mysentiment$fear)
+mysentiment.joy =sum(mysentiment$joy)
+mysentiment.sadness =sum(mysentiment$sadness)
+mysentiment.surprise =sum(mysentiment$surprise)
+mysentiment.trust =sum(mysentiment$trust)
+mysentiment.negative =sum(mysentiment$negative)
+#bar chart
+yAxis = c(mysentiment.positive,
+           + mysentiment.anger,
+           + mysentiment.anticipation,
+           + mysentiment.disgust,
+           + mysentiment.fear,
+           + mysentiment.joy,
+           + mysentiment.sadness,
+           + mysentiment.surprise,
+           + mysentiment.trust,
+           + mysentiment.negative)
+xAxis = c("Positive","Anger","Anticipation","Disgust","Fear","Joy","Sadness",
+           "Surprise","Trust","Negative")
+colors = c("green","red","blue","orange","red","green","orange","blue","green","red")
+yRange = range(0,yAxis)
+barplot(yAxis, names.arg = xAxis, 
+        xlab = "Emotional valence", ylab = "Score", main = "Twitter sentiment", 
+        sub = "Formula 1 analysis", col = colors, border = "black", xpd = F, ylim = yRange,
+        axisnames = T, cex.axis = 0.8, cex.sub = 0.8, col.sub = "blue",las=2)
+```
+
+
+```{r}
+#Plot by date - understanding cummulative sentiment score movement
+
+mysentimentvalues = data.frame(get_sentiment((twt_data$text)))
+colnames(mysentimentvalues)="polarity"
+mysentimentvalues$date = twt_data$created
+result = aggregate(polarity ~ date, data = mysentimentvalues, sum)
+result
+plot(result, type = "l")
+```
+
+
+```{r}
+#Plot by date - understanding average sentiment score movement
+
+result1 = aggregate(polarity ~ date, data = mysentimentvalues, mean)
+result1
+plot(result1, type = "l")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
